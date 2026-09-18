@@ -1,5 +1,7 @@
-from langchain_ollama import OllamaEmbeddings
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
+from langchain_core.prompts import ChatPromptTemplate
+
 
 documents = [
     "MailMind is an AI-powered email management application. It automatically analyzes incoming emails and helps identify important messages, deadlines, and required actions. The application was built using Go and integrates with Gmail.",
@@ -11,15 +13,18 @@ documents = [
     "I enjoy working with computer vision. I have worked on projects involving image processing, facial landmarks, image enhancement, and computer vision models."
 ]
 
+
 embeddings = OllamaEmbeddings(
     model="nomic-embed-text"
 )
 
+
 vector_store = Chroma.from_texts(
     texts=documents,
     embedding=embeddings,
-    collection_name="research_assistant"
+    collection_name="research_assistant_rag"
 )
+
 
 retriever = vector_store.as_retriever(
     search_type="similarity_score_threshold",
@@ -29,19 +34,50 @@ retriever = vector_store.as_retriever(
     }
 )
 
+
+llm = ChatOllama(
+    model="qwen2.5:3b",
+    temperature=0
+)
+
+
+prompt = ChatPromptTemplate.from_template("""
+You are a helpful assistant.
+
+Answer the question using only the provided context.
+
+If the answer cannot be found in the context, say:
+"I don't have enough information to answer that."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+""")
+
+
 while True:
     question = input("\nQuestion: ")
 
     if question.lower() in ["exit", "quit"]:
         break
 
-    results = retriever.invoke(question)
+    retrieved_documents = retriever.invoke(question)
 
-    print("\nRetrieved Documents:")
+    context = "\n\n".join(
+        document.page_content
+        for document in retrieved_documents
+    )
 
-    if not results:
-        print("No sufficiently relevant documents found.")
-        continue
+    formatted_prompt = prompt.invoke({
+        "context": context,
+        "question": question
+    })
 
-    for i, document in enumerate(results):
-        print(f"\n{i + 1}. {document.page_content}")
+    response = llm.invoke(formatted_prompt)
+
+    print("\nAnswer:")
+    print(response.content)
