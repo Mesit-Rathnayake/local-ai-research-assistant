@@ -8,27 +8,46 @@ from pypdf import PdfReader
 
 from text_cleaner import clean_text
 
-PDF_PATH = "documents/research_paper.pdf"
+DOCUMENTS_PATH = Path("documents")
 CHROMA_PATH = "chroma_db"
 
-file_path = Path(PDF_PATH)
-reader = PdfReader(file_path)
-documents = [
-    Document(
-        page_content=page.extract_text() or "",
-        metadata={"source": str(file_path), "page": page_number},
-    )
-    for page_number, page in enumerate(reader.pages)
-]
+documents = []
 
-for document in documents:
-    document.page_content = clean_text(document.page_content)
+for file_path in DOCUMENTS_PATH.iterdir():
+    if file_path.suffix.lower() == ".pdf":
+        reader = PdfReader(file_path)
+        loaded_documents = [
+            Document(
+                page_content=page.extract_text() or "",
+                metadata={"source": file_path.name, "page": page_number},
+            )
+            for page_number, page in enumerate(reader.pages)
+        ]
+    elif file_path.suffix.lower() in [".txt", ".md"]:
+        loaded_documents = [
+            Document(
+                page_content=file_path.read_text(encoding="utf-8"),
+                metadata={"source": file_path.name},
+            )
+        ]
+    else:
+        continue
+
+    for document in loaded_documents:
+        document.page_content = clean_text(document.page_content)
+        document.metadata["source"] = file_path.name
+
+    documents.extend(loaded_documents)
+
+print("Documents loaded:", len(documents))
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=100,
 )
 chunks = splitter.split_documents(documents)
+
+print("Total chunks:", len(chunks))
 
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
@@ -39,7 +58,7 @@ Chroma.from_documents(
     collection_name="research_papers",
 )
 
-print("Ingestion complete.")
-print("Pages:", len(documents))
+print("\nIngestion complete.")
+print("Documents:", len(documents))
 print("Chunks:", len(chunks))
 print("Vector database:", CHROMA_PATH)

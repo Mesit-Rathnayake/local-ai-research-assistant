@@ -1,160 +1,35 @@
-import requests
-import math
+from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_chroma import Chroma
+from langchain_core.prompts import ChatPromptTemplate
 
+CHROMA_PATH = "chroma_db"
 
-EMBEDDING_URL = "http://localhost:11434/api/embeddings"
-GENERATE_URL = "http://localhost:11434/api/generate"
+embeddings = OllamaEmbeddings(
+    model="nomic-embed-text"
+)
 
-EMBEDDING_MODEL = "nomic-embed-text"
-LLM_MODEL = "qwen2.5:3b"
+vector_store = Chroma(
+    persist_directory=CHROMA_PATH,
+    collection_name="research_papers",
+    embedding_function=embeddings
+)
 
+llm = ChatOllama(
+    model="qwen2.5:3b",
+    temperature=0
+)
 
-documents = [
-    """
-    MailMind is an AI-powered email management application.
-    It automatically analyzes incoming emails and helps identify
-    important messages, deadlines, and required actions.
-    The application was built using Go and integrates with Gmail.
-    """,
+prompt = ChatPromptTemplate.from_template("""
+You are a research assistant.
 
-    """
-    My Academia is a university learning management system.
-    It was developed using React, Node.js, and MongoDB.
-    The system includes a citation-based RAG chatbot that allows
-    students to ask questions about their academic content.
-    """,
+Answer the question using ONLY the provided context.
 
-    """
-    I am studying Computer Engineering at the University of Ruhuna.
-    I am interested in artificial intelligence, machine learning,
-    computer vision, and software engineering.
-    """,
-
-    """
-    I enjoy working with computer vision.
-    I have worked on projects involving image processing,
-    facial landmarks, image enhancement, and computer vision models.
-    """
-]
-
-
-def embed(text):
-    response = requests.post(
-        EMBEDDING_URL,
-        json={
-            "model": EMBEDDING_MODEL,
-            "prompt": text
-        }
-    )
-
-    response.raise_for_status()
-
-    return response.json()["embedding"]
-
-
-def generate_answer(prompt):
-    response = requests.post(
-        GENERATE_URL,
-        json={
-            "model": LLM_MODEL,
-            "prompt": prompt,
-            "stream": False
-        }
-    )
-
-    response.raise_for_status()
-
-    return response.json()["response"]
-
-
-def cosine_similarity(a, b):
-    dot_product = sum(x * y for x, y in zip(a, b))
-
-    magnitude_a = math.sqrt(sum(x * x for x in a))
-    magnitude_b = math.sqrt(sum(x * x for x in b))
-
-    return dot_product / (magnitude_a * magnitude_b)
-
-
-def chunk_text(text, chunk_size=40, overlap=10):
-    words = text.split()
-
-    if len(words) <= chunk_size:
-        return [" ".join(words)]
-
-    chunks = []
-
-    start = 0
-
-    while start < len(words):
-        end = start + chunk_size
-        chunk = " ".join(words[start:end])
-
-        if len(chunk.split()) < overlap:
-            break
-
-        chunks.append(chunk)
-
-        if end >= len(words):
-            break
-
-        start += chunk_size - overlap
-
-    return chunks
-
-
-chunks = []
-
-for document in documents:
-    chunks.extend(chunk_text(document))
-
-
-print(f"\nCreated {len(chunks)} chunks.")
-
-print("\nGenerating embeddings...")
-
-chunk_embeddings = []
-
-for chunk in chunks:
-    chunk_embeddings.append(embed(chunk))
-
-print("Embeddings ready.")
-
-
-while True:
-    question = input("\nQuestion: ")
-
-    if question.lower() in ["exit", "quit"]:
-        break
-
-    question_embedding = embed(question)
-
-    results = []
-
-    for chunk, chunk_embedding in zip(chunks, chunk_embeddings):
-        similarity = cosine_similarity(
-            question_embedding,
-            chunk_embedding
-        )
-
-        results.append((similarity, chunk))
-
-    results.sort(reverse=True)
-
-    top_results = results[:3]
-
-    context = "\n\n".join(
-        chunk for similarity, chunk in top_results
-    )
-
-    prompt = f"""
-You are a helpful assistant.
-
-Answer the question using only the information provided
-in the context.
+Each context section contains its source document and page information.
 
 If the answer cannot be found in the context, say:
-"I don't have enough information to answer that."
+"I don't have enough information in the provided documents."
+
+Do not use your own knowledge to answer.
 
 Context:
 {context}
@@ -163,14 +38,71 @@ Question:
 {question}
 
 Answer:
-"""
+""")
 
-    answer = generate_answer(prompt)
+while True:
+    question = input("\nQuestion: ")
 
-    print("\nRetrieved Chunks:")
+    if question.lower() in ["exit", "quit"]:
+        break
 
-    for similarity, chunk in top_results:
-        print(f"\n{similarity:.4f} → {chunk}")
+    results = vector_store.similarity_search_with_relevance_scores(
+        question,
+        k=3
+    )
+
+    relevant_results = [
+        (document, score)
+        for document, score in results
+        if score >= 0.5
+    ]
+
+    if not relevant_results:
+        print("\nAnswer:")
+        print("I don't have enough information in the provided documents.")
+        continue
+
+    context_parts = []
+
+    for document, score in relevant_results:
+        source = document.metadata.get("source", "Unknown source")
+        page = document.metadata.get("page")
+
+        if page is not None:
+            source_info = f"{source} | Page {page + 1}"
+        else:
+            source_info = source
+
+        context_parts.append(
+            f"[Source: {source_info}]\n"
+            f"{document.page_content}"
+        )
+
+    context = "\n\n".join(context_parts)
+
+    messages = prompt.format_messages(
+        context=context,
+        question=question
+    )
+
+    response = llm.invoke(messages)
 
     print("\nAnswer:")
-    print(answer)
+    print(response.content)
+
+    print("\nSources:")
+
+    shown_sources = set()
+
+    for document, score in relevant_results:
+        source = document.metadata.get("source", "Unknown source")
+        page = document.metadata.get("page")
+
+        if page is not None:
+            source_info = f"{source}, Page {page + 1}"
+        else:
+            source_info = source
+
+        if source_info not in shown_sources:
+            print(f"- {source_info}")
+            shown_sources.add(source_info)
