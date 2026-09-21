@@ -1,0 +1,13 @@
+Artificial Intelligence Research Notes
+
+Artificial intelligence is a field of computer science focused on creating systems capable of performing tasks that normally require human intelligence.
+
+Machine learning is a subfield of artificial intelligence where systems learn patterns from data rather than relying entirely on explicitly programmed rules.
+
+Deep learning is a branch of machine learning that uses neural networks with multiple layers. Deep learning has become particularly important in computer vision, natural language processing, and speech recognition.
+
+Computer vision focuses on enabling computers to interpret and understand visual information from images and videos.
+
+Retrieval-Augmented Generation, commonly known as RAG, combines information retrieval with large language models. Instead of relying entirely on the model's pretrained knowledge, a RAG system retrieves relevant information from an external knowledge base and provides that information to the language model as context.
+
+A typical RAG pipeline consists of document ingestion, text chunking, embedding generation, vector storage, retrieval, and language model generation.
