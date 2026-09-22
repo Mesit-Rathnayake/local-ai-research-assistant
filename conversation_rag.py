@@ -2,6 +2,8 @@ from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 
+from memory import init_db, load_messages, save_message
+
 CHROMA_PATH = "chroma_db"
 
 embeddings = OllamaEmbeddings(
@@ -65,7 +67,8 @@ Current question:
 Answer:
 """)
 
-conversation_history = []
+init_db()
+conversation_history = load_messages()
 
 while True:
     question = input("\nQuestion: ")
@@ -105,11 +108,13 @@ while True:
         print("\nAnswer:")
         print(answer)
 
+        save_message("user", question)
         conversation_history.append({
             "role": "user",
             "content": question
         })
 
+        save_message("assistant", answer)
         conversation_history.append({
             "role": "assistant",
             "content": answer
@@ -170,11 +175,13 @@ while True:
             print(f"- {source_info}")
             shown_sources.add(source_info)
 
+    save_message("user", question)
     conversation_history.append({
         "role": "user",
         "content": question
     })
 
+    save_message("assistant", answer)
     conversation_history.append({
         "role": "assistant",
         "content": answer
