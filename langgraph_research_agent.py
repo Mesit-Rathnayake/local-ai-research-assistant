@@ -1,4 +1,5 @@
 
+import re
 from typing import TypedDict
 
 from langchain_ollama import ChatOllama
@@ -6,15 +7,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from memory import init_db, load_messages, save_message
-from tools import search_documents
+from tools import retrieve_documents
 
 
 class ResearchState(TypedDict):
     question: str
+    search_query: str
     context: str
+    documents: list[dict]
     has_evidence: bool
     answer: str
-    history: list
+    history: list[dict]
 
 
 llm = ChatOllama(
@@ -24,18 +27,19 @@ llm = ChatOllama(
 
 
 def retrieve_node(state: ResearchState) -> dict:
-    context = search_documents.invoke({
-        "query": state["question"]
-    })
-
-    has_evidence = (
-        "No relevant information was found in the documents."
-        not in context
+    documents = retrieve_documents(state["search_query"])
+    context = "\n\n".join(
+        f'[Source ID: {document["id"]}]\n'
+        f'[Source: {document["source"]}'
+        f'{f", Page {document["page"]}" if document["page"] is not None else ""}]\n'
+        f'{document["content"]}'
+        for document in documents
     )
 
     return {
+        "documents": documents,
         "context": context,
-        "has_evidence": has_evidence
+        "has_evidence": bool(documents)
     }
 
 
@@ -46,13 +50,39 @@ def route_after_retrieval(state: ResearchState):
     return "refuse"
 
 
+def format_citations(answer: str, documents: list[dict]) -> str:
+    source_map = {
+        str(document["id"]): (
+            f'{document["source"]}'
+            f'{f", Page {document["page"]}" if document["page"] is not None else ""}'
+        )
+        for document in documents
+    }
+
+    def replace_citation(match):
+        source_id = match.group(1)
+        if source_id not in source_map:
+            return ""
+
+        return f'[Source: {source_map[source_id]}]'
+
+    return re.sub(r"\[(\d+)\]", replace_citation, answer)
+
+
 def generate_node(state: ResearchState) -> dict:
     messages = [
         SystemMessage(
-            content=(
-                "You are a research assistant. Answer using only the "
-                "provided document context. Do not add unsupported facts."
-            )
+            content="""You are a research assistant.
+
+Answer using only the retrieved document excerpts as factual evidence.
+
+Rules:
+- Answer the question clearly and concisely.
+- Cite factual claims using the source IDs shown in the excerpts.
+- Use citation markers like [1] or [4].
+- Only use source IDs that appear in the supplied excerpts.
+- Do not invent sources, page numbers, or facts.
+- If the evidence is insufficient, say so."""
         ),
         HumanMessage(
             content=(
@@ -63,9 +93,10 @@ def generate_node(state: ResearchState) -> dict:
     ]
 
     response = llm.invoke(messages)
+    answer = format_citations(response.content, state["documents"])
 
     return {
-        "answer": response.content
+        "answer": answer
     }
 
 
@@ -121,7 +152,9 @@ if __name__ == "__main__":
 
         result = research_graph.invoke({
             "question": question,
+            "search_query": question,
             "context": "",
+            "documents": [],
             "has_evidence": False,
             "answer": "",
             "history": load_messages()

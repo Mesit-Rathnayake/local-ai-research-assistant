@@ -57,3 +57,32 @@ def search_documents(query: str) -> str:
         )
 
     return "\n\n".join(output)
+
+
+def retrieve_documents(query: str) -> list[dict]:
+    results = vector_store.similarity_search_with_relevance_scores(
+        query,
+        k=5
+    )
+
+    relevant_results = [
+        (document, score)
+        for document, score in results
+        if score >= 0.4
+    ]
+
+    documents = []
+
+    for index, (document, score) in enumerate(relevant_results, start=1):
+        source = document.metadata.get("source", "Unknown source")
+        page = document.metadata.get("page")
+
+        documents.append({
+            "id": index,
+            "source": source,
+            "page": page + 1 if page is not None else None,
+            "content": document.page_content,
+            "score": score
+        })
+
+    return documents
